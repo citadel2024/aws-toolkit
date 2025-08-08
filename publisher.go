@@ -148,9 +148,11 @@ func NewSQSPublisher(queueURL string, opts ...SQSPublisherOpt) SQSPublisher {
 func (p *sqsPublisher) PublishMessageBatch(entry types.SendMessageBatchRequestEntry) error {
 	p.mu.RLock()
 	if p.closed {
+		p.mu.RUnlock()
 		return ErrPublisherClosed
 	}
 	if !p.started {
+		p.mu.RUnlock()
 		return ErrPublisherNotStarted
 	}
 	p.mu.RUnlock()
@@ -176,9 +178,11 @@ func (p *sqsPublisher) PublishMessageBatch(entry types.SendMessageBatchRequestEn
 func (p *sqsPublisher) Start(ctx context.Context) error {
 	p.mu.Lock()
 	if p.started {
+		p.mu.Unlock()
 		return ErrPublisherAlreadyStarted
 	}
 	if p.closed {
+		p.mu.Unlock()
 		return ErrPublisherClosed
 	}
 	p.started = true
