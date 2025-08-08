@@ -230,7 +230,6 @@ func (p *sqsPublisher) startSendMessageBatchWorker() {
 	appendToBatch := func(entry types.SendMessageBatchRequestEntry) {
 		p.logger.Debug().
 			Str("entryId", aws.ToString(entry.Id)).
-			Str("entryMessageBody", aws.ToString(entry.MessageBody)).
 			Msg("Appending message to batch")
 		input.Entries = append(input.Entries, entry)
 		if len(input.Entries) >= p.batchMessagesLimit {
