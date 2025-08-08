@@ -124,7 +124,7 @@ var ApplyPublisherDefaults = func(p *sqsPublisher) {
 		}
 	}
 
-	p.messagesCh = make(chan types.SendMessageBatchRequestEntry, p.batchMessagesLimit*2) // Double buffer for better throughput
+	p.messagesCh = make(chan types.SendMessageBatchRequestEntry, p.batchMessagesLimit)
 	p.shutdown = make(chan struct{})
 	p.done = make(chan struct{})
 }
@@ -170,11 +170,12 @@ func (p *sqsPublisher) PublishMessageBatch(entry types.SendMessageBatchRequestEn
 	case <-p.shutdown:
 		return ErrPublisherShutdown
 	default:
+		p.logger.Warn().Msg("Message channel is full, message rejected.")
 		return ErrMessageChannelFull
 	}
 }
 
-// Start changes thr `started` value and starts the message batch sending worker.
+// Start changes the `started` value and starts the message batch sending worker.
 func (p *sqsPublisher) Start(ctx context.Context) error {
 	p.mu.Lock()
 	if p.started {
@@ -231,7 +232,6 @@ func (p *sqsPublisher) startSendMessageBatchWorker() {
 			Str("entryId", aws.ToString(entry.Id)).
 			Str("entryMessageBody", aws.ToString(entry.MessageBody)).
 			Msg("Appending message to batch")
-
 		input.Entries = append(input.Entries, entry)
 		if len(input.Entries) >= p.batchMessagesLimit {
 			p.sendMessageBatch(input)
@@ -262,22 +262,18 @@ func (p *sqsPublisher) startSendMessageBatchWorker() {
 		case m := <-p.messagesCh:
 			appendToBatch(m)
 		case <-p.shutdown:
-			goto drainAndExit
+			p.logger.Info().Msg("sqsPublisher shutting down, draining message queue")
+			for entry := range p.messagesCh {
+				appendToBatch(entry)
+			}
+			if len(input.Entries) > 0 {
+				p.logger.Info().Int("remainingEntries", len(input.Entries)).Msg("Sending final message batch")
+				p.sendMessageBatch(input)
+			}
+			p.logger.Info().Msg("sqsPublisher shutdown cleanly")
+			return
 		}
 	}
-drainAndExit:
-	p.logger.Info().Msg("sqsPublisher shutting down, draining message queue")
-	for entry := range p.messagesCh {
-		appendToBatch(entry)
-		if len(input.Entries) >= p.batchMessagesLimit {
-			p.sendMessageBatch(input)
-		}
-	}
-	if len(input.Entries) > 0 {
-		p.logger.Info().Int("remainingEntries", len(input.Entries)).Msg("Sending final message batch")
-		p.sendMessageBatch(input)
-	}
-	p.logger.Info().Msg("sqsPublisher shutdown cleanly")
 }
 
 func (p *sqsPublisher) sendMessageBatch(input *sqs.SendMessageBatchInput) {
@@ -295,13 +291,17 @@ func (p *sqsPublisher) sendMessageBatch(input *sqs.SendMessageBatchInput) {
 	duration := time.Since(start)
 	loggerWithCtx := p.logger.With().Int("messageCount", messageCount).Dur("duration", duration).Logger()
 	if err != nil {
-		loggerWithCtx.Error().Err(err).Int("failedCount", len(out.Failed)).Msg("Failed to send message batch")
+		failedCount := 0
+		if out != nil {
+			failedCount = len(out.Failed)
+		}
+		loggerWithCtx.Error().Err(err).Int("failedCount", failedCount).Msg("Failed to send message batch")
 	} else {
 		loggerWithCtx.Info().Msg("Send message batch completed")
-		// Clear entries for next batch (reuse slice to avoid allocations)
-		input.Entries = input.Entries[:0]
 	}
 	p.onSendMessageComplete(out, err)
+	// Clear entries for next batch (reuse slice to avoid allocations)
+	input.Entries = input.Entries[:0]
 }
 
 func (p *sqsPublisher) IsStarted() bool {
