@@ -144,8 +144,7 @@ func NewSQSPublisher(queueURL string, opts ...SQSPublisherOpt) SQSPublisher {
 	return p
 }
 
-// PublishMessageBatch adds entry to the messages buffer channel.
-func (p *sqsPublisher) PublishMessageBatch(entry types.SendMessageBatchRequestEntry) error {
+func (p *sqsPublisher) checkPublisherStatus() error {
 	p.mu.RLock()
 	if p.closed {
 		p.mu.RUnlock()
@@ -156,7 +155,43 @@ func (p *sqsPublisher) PublishMessageBatch(entry types.SendMessageBatchRequestEn
 		return ErrPublisherNotStarted
 	}
 	p.mu.RUnlock()
+	return nil
+}
 
+func (p *sqsPublisher) PublishMessage(ctx context.Context, messageBody string) error {
+	input := &sqs.SendMessageInput{
+		QueueUrl:    &p.queueURL,
+		MessageBody: aws.String(messageBody),
+	}
+	return p.PublishMessageWithInput(ctx, input)
+}
+
+func (p *sqsPublisher) PublishMessageWithInput(ctx context.Context, input *sqs.SendMessageInput) error {
+	if err := p.checkPublisherStatus(); err != nil {
+		return err
+	}
+	out, err := p.client.SendMessage(ctx, input)
+	var messageId string
+	if out != nil && out.MessageId != nil {
+		messageId = aws.ToString(out.MessageId)
+	}
+	p.logger.Info().Str("messageId", messageId).Msg("Send sqs message completed")
+	return err
+}
+
+func (p *sqsPublisher) PublishMessageBatch(id, messageBody string) error {
+	entry := types.SendMessageBatchRequestEntry{
+		Id:          aws.String(id),
+		MessageBody: aws.String(messageBody),
+	}
+	return p.PublishMessageBatchWithEntry(entry)
+}
+
+// PublishMessageBatchWithEntry adds entry to the messages buffer channel.
+func (p *sqsPublisher) PublishMessageBatchWithEntry(entry types.SendMessageBatchRequestEntry) error {
+	if err := p.checkPublisherStatus(); err != nil {
+		return err
+	}
 	if entry.MessageBody == nil || aws.ToString(entry.MessageBody) == "" {
 		return ErrMessageBodyEmpty
 	}
