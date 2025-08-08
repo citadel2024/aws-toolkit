@@ -32,8 +32,8 @@ type sqsPublisher struct {
 	messagesCh chan types.SendMessageBatchRequestEntry
 	// shutdown is a channel used to signal the publisher to stop processing messages.
 	shutdown chan struct{}
-	// onSendMessageComplete is called when a batch send operation completes.
-	onSendMessageComplete func(*sqs.SendMessageBatchOutput, error)
+	// onSendMessageBatchComplete is called when a batch send operation completes.
+	onSendMessageBatchComplete func(*sqs.SendMessageBatchOutput, error)
 	// done is closed when the message batching goroutine exits.
 	done chan struct{}
 	// Add synchronization for thread-safe operations, mu is used to protect `started` and `closed`
@@ -80,9 +80,9 @@ func WithSendingMessageTimeoutSeconds(timeout int) SQSPublisherOpt {
 	}
 }
 
-func WithOnSendMessageComplete(handler func(*sqs.SendMessageBatchOutput, error)) SQSPublisherOpt {
+func WithOnSendMessageBatchComplete(handler func(*sqs.SendMessageBatchOutput, error)) SQSPublisherOpt {
 	return func(p *sqsPublisher) {
-		p.onSendMessageComplete = handler
+		p.onSendMessageBatchComplete = handler
 	}
 }
 
@@ -107,8 +107,8 @@ var ApplyPublisherDefaults = func(p *sqsPublisher) {
 	if p.sendingMessageTimeoutSeconds == 0 {
 		p.sendingMessageTimeoutSeconds = DefaultSendingMessageTimeoutSeconds
 	}
-	if p.onSendMessageComplete == nil {
-		p.onSendMessageComplete = func(out *sqs.SendMessageBatchOutput, err error) {
+	if p.onSendMessageBatchComplete == nil {
+		p.onSendMessageBatchComplete = func(out *sqs.SendMessageBatchOutput, err error) {
 			if err != nil {
 				p.logger.Error().Err(err).Msg("unable to send message batch")
 			}
@@ -333,7 +333,7 @@ func (p *sqsPublisher) sendMessageBatch(input *sqs.SendMessageBatchInput) {
 	} else {
 		loggerWithCtx.Info().Msg("Send message batch completed")
 	}
-	p.onSendMessageComplete(out, err)
+	p.onSendMessageBatchComplete(out, err)
 	// Clear entries for next batch (reuse slice to avoid allocations)
 	input.Entries = input.Entries[:0]
 }
