@@ -167,10 +167,10 @@ func (p *sqsPublisher) PublishMessage(ctx context.Context, messageBody string) e
 }
 
 func (p *sqsPublisher) PublishMessageWithInput(ctx context.Context, input *sqs.SendMessageInput) error {
-	if err := p.checkPublisherStatus(); err != nil {
-		return err
-	}
 	out, err := p.client.SendMessage(ctx, input)
+	if input.MessageBody == nil || aws.ToString(input.MessageBody) == "" {
+		return ErrMessageBodyEmpty
+	}
 	var messageId string
 	if out != nil && out.MessageId != nil {
 		messageId = aws.ToString(out.MessageId)
