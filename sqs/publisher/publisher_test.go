@@ -26,6 +26,18 @@ type mockSQSClient struct {
 	sendMessageErr         error
 }
 
+func (m *mockSQSClient) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+	panic("implement me")
+}
+
+func (m *mockSQSClient) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error) {
+	panic("implement me")
+}
+
+func (m *mockSQSClient) ChangeMessageVisibility(ctx context.Context, params *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error) {
+	panic("implement me")
+}
+
 func newMockSQSClient() *mockSQSClient {
 	return &mockSQSClient{
 		sendMessageBatchInputs: make([]*sqs.SendMessageBatchInput, 0),
