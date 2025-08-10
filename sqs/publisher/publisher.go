@@ -181,16 +181,16 @@ func (p *sqsPublisher) PublishMessageWithInput(ctx context.Context, input *sqs.S
 	return err
 }
 
-func (p *sqsPublisher) PublishMessageBatch(id, messageBody string) error {
+func (p *sqsPublisher) PublishMessageBatch(ctx context.Context, id, messageBody string) error {
 	entry := types.SendMessageBatchRequestEntry{
 		Id:          aws.String(id),
 		MessageBody: aws.String(messageBody),
 	}
-	return p.PublishMessageBatchWithEntry(entry)
+	return p.PublishMessageBatchWithEntry(ctx, entry)
 }
 
 // PublishMessageBatchWithEntry adds entry to the messages buffer channel.
-func (p *sqsPublisher) PublishMessageBatchWithEntry(entry types.SendMessageBatchRequestEntry) error {
+func (p *sqsPublisher) PublishMessageBatchWithEntry(ctx context.Context, entry types.SendMessageBatchRequestEntry) error {
 	if err := p.checkPublisherStatus(); err != nil {
 		return err
 	}
@@ -215,13 +215,13 @@ func (p *sqsPublisher) PublishMessageBatchWithEntry(entry types.SendMessageBatch
 // Start changes the `started` value and starts the message batch sending worker.
 func (p *sqsPublisher) Start(ctx context.Context) error {
 	p.mu.Lock()
-	if p.started {
-		p.mu.Unlock()
-		return ErrPublisherAlreadyStarted
-	}
 	if p.closed {
 		p.mu.Unlock()
 		return ErrPublisherClosed
+	}
+	if p.started {
+		p.mu.Unlock()
+		return ErrPublisherAlreadyStarted
 	}
 	p.started = true
 	p.mu.Unlock()
