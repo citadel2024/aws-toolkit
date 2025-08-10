@@ -147,15 +147,13 @@ func New(queueURL string, opts ...SQSPublisherOpt) Publisher {
 
 func (p *sqsPublisher) checkPublisherStatus() error {
 	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.closed {
-		p.mu.RUnlock()
 		return ErrPublisherClosed
 	}
 	if !p.started {
-		p.mu.RUnlock()
 		return ErrPublisherNotStarted
 	}
-	p.mu.RUnlock()
 	return nil
 }
 
@@ -168,9 +166,12 @@ func (p *sqsPublisher) PublishMessage(ctx context.Context, messageBody string) e
 }
 
 func (p *sqsPublisher) PublishMessageWithInput(ctx context.Context, input *sqs.SendMessageInput) error {
-	out, err := p.client.SendMessage(ctx, input)
 	if input.MessageBody == nil || aws.ToString(input.MessageBody) == "" {
 		return ErrMessageBodyEmpty
+	}
+	out, err := p.client.SendMessage(ctx, input)
+	if err != nil {
+		return err
 	}
 	var messageId string
 	if out != nil && out.MessageId != nil {
@@ -262,7 +263,7 @@ func (p *sqsPublisher) startSendMessageBatchWorker() {
 		QueueUrl: &p.queueURL,
 		Entries:  make([]types.SendMessageBatchRequestEntry, 0, p.batchMessagesLimit),
 	}
-	var lastBatchSend time.Time
+	var lastBatchSend = time.Now()
 	appendToBatch := func(entry types.SendMessageBatchRequestEntry) {
 		p.logger.Debug().
 			Str("entryId", aws.ToString(entry.Id)).
@@ -298,8 +299,16 @@ func (p *sqsPublisher) startSendMessageBatchWorker() {
 			appendToBatch(m)
 		case <-p.shutdown:
 			p.logger.Info().Msg("sqsPublisher shutting down, draining message queue")
-			for entry := range p.messagesCh {
-				appendToBatch(entry)
+		drainingLoop:
+			// We don't close the messagesCh channel here, maybe many goroutines are still trying to send messages.
+			// Instead, we just drain the channel until it's empty.
+			for {
+				select {
+				case entry := <-p.messagesCh:
+					appendToBatch(entry)
+				default:
+					break drainingLoop
+				}
 			}
 			if len(input.Entries) > 0 {
 				p.logger.Info().Int("remainingEntries", len(input.Entries)).Msg("Sending final message batch")
