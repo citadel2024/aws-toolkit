@@ -88,7 +88,7 @@ func WithOnSendMessageBatchComplete(handler func(*sqs.SendMessageBatchOutput, er
 	}
 }
 
-// ApplyPublisherDefaults contains the default configuration for a new sqsPublisher.
+// ApplyPublisherDefaults contains the default configuration for a new sqs publisher.
 var ApplyPublisherDefaults = func(p *sqsPublisher) {
 	if p.logger.GetLevel() == zerolog.Disabled {
 		p.logger = zerolog.Nop()
@@ -125,19 +125,18 @@ var ApplyPublisherDefaults = func(p *sqsPublisher) {
 			}
 		}
 	}
-
 	p.messagesCh = make(chan types.SendMessageBatchRequestEntry, p.batchMessagesLimit)
-	p.shutdown = make(chan struct{})
-	p.done = make(chan struct{})
 }
 
-// NewSQSPublisher returns a new sqsPublisher with sensible defaults.
-func NewSQSPublisher(queueURL string, opts ...SQSPublisherOpt) Publisher {
+// New returns a new sqsPublisher with sensible defaults.
+func New(queueURL string, opts ...SQSPublisherOpt) Publisher {
 	if queueURL == "" {
 		panic("queueURL cannot be empty")
 	}
 	p := &sqsPublisher{
 		queueURL: queueURL,
+		shutdown: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(p)
