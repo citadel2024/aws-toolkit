@@ -1,4 +1,4 @@
-package main
+package publisher
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/rs/zerolog"
+
+	. "github.com/citadel2024/aws-toolkit/sqs"
 )
 
 type sqsPublisher struct {
@@ -19,7 +21,7 @@ type sqsPublisher struct {
 	// logger is used for logging events and errors. Default zerolog.Nop()
 	logger zerolog.Logger
 	// client is the SQS client used to send messages.
-	client SQSClient
+	client Client
 	// batchMessagesLimit is the maximum number of messages per batch.
 	// The user should estimate the number of batches based on the distribution of message sizes.
 	batchMessagesLimit int
@@ -56,7 +58,7 @@ func WithLogger(logger zerolog.Logger) SQSPublisherOpt {
 	}
 }
 
-func WithClient(client SQSClient) SQSPublisherOpt {
+func WithClient(client Client) SQSPublisherOpt {
 	return func(p *sqsPublisher) {
 		p.client = client
 	}
@@ -130,7 +132,7 @@ var ApplyPublisherDefaults = func(p *sqsPublisher) {
 }
 
 // NewSQSPublisher returns a new sqsPublisher with sensible defaults.
-func NewSQSPublisher(queueURL string, opts ...SQSPublisherOpt) SQSPublisher {
+func NewSQSPublisher(queueURL string, opts ...SQSPublisherOpt) Publisher {
 	if queueURL == "" {
 		panic("queueURL cannot be empty")
 	}
