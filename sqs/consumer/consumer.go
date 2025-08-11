@@ -102,21 +102,21 @@ type sqsConsumer struct {
 	processingConcurrency int
 	// maxMessagesPerBatch is the maximum number of messages to receive in a single batch.
 	maxMessagesPerBatch int32
-	// waitTimeSeconds is the duration to wait for messages when polling.
+	// waitTimeSeconds is the duration (in seconds) to wait for a message to arrive in the queue.
 	waitTimeSeconds int32
 	// pollIntervalMilliseconds is the interval between polling attempts in milliseconds.
 	pollIntervalMilliseconds int32
 }
 
 // ApplyConsumerDefaults contains the default configuration for a new sqs consumer.
-var ApplyConsumerDefaults = func(c *sqsConsumer) {
+var ApplyConsumerDefaults = func(c *sqsConsumer) error {
 	if c.logger.GetLevel() == zerolog.Disabled {
 		c.logger = zerolog.Nop()
 	}
 	if c.client == nil {
 		cfg, err := config.LoadDefaultConfig(context.Background())
 		if err != nil {
-			panic(fmt.Sprintf("unable to load AWS SDK config, %v", err))
+			return fmt.Errorf("unable to load AWS SDK config: %w", err)
 		}
 		c.client = sqs.NewFromConfig(cfg)
 	}
@@ -140,11 +140,12 @@ var ApplyConsumerDefaults = func(c *sqsConsumer) {
 			c.logger.Error().Err(err).Msg("An exception occurred during message processing")
 		}
 	}
+	return nil
 }
 
-func New(queueURL string, options ...Option) Consumer {
+func New(queueURL string, options ...Option) (Consumer, error) {
 	if queueURL == "" {
-		panic("queueURL cannot be empty")
+		return nil, fmt.Errorf("queueURL cannot be empty")
 	}
 	c := &sqsConsumer{
 		queueURL: queueURL,
@@ -153,11 +154,13 @@ func New(queueURL string, options ...Option) Consumer {
 		opt(c)
 	}
 	if c.messageHandler == nil {
-		panic("messageHandler cannot be nil")
+		return nil, fmt.Errorf("messageHandler cannot be nil")
 	}
-	ApplyConsumerDefaults(c)
+	if err := ApplyConsumerDefaults(c); err != nil {
+		return nil, err
+	}
 	c.logger = c.logger.With().Str("service", "consumer").Str("queueURL", c.queueURL).Logger()
-	return c
+	return c, nil
 }
 
 func (c *sqsConsumer) Start(ctx context.Context) error {
