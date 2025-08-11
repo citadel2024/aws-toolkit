@@ -1,8 +1,14 @@
-package main
+package sqs
 
 import "errors"
 
 var (
+	// ErrNonRetryable is a sentinel error.
+	// When a MessageHandler returns this error, the consumer will consider the message "poisoned" or unprocessable,
+	// and it will be deleted from the queue (avoiding retries).
+	// Usage: fmt.Errorf("%w: invalid message format", sqs.ErrNonRetryable)
+	ErrNonRetryable = errors.New("non-retryable error")
+
 	// SQS publisher errors
 
 	ErrPublisherClosed         = errors.New("publisher is closed")
