@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 	"sync"
+	"time"
 
 	. "github.com/citadel2024/aws-toolkit/sqs"
 )
@@ -71,7 +72,7 @@ func WithMaxMessagesPerBatch(count int32) Option {
 func WithWaitTimeSeconds(seconds int32) Option {
 	return func(c *sqsConsumer) {
 		if seconds >= 0 && seconds <= 20 {
-			c.waitTimeSeconds = seconds
+			c.waitTimeMilliseconds = seconds
 		}
 	}
 }
@@ -101,8 +102,10 @@ type sqsConsumer struct {
 	processingConcurrency int
 	// maxMessagesPerBatch is the maximum number of messages to receive in a single batch.
 	maxMessagesPerBatch int32
-	// waitTimeSeconds is the duration to wait for messages when polling.
-	waitTimeSeconds int32
+	// waitTimeMilliseconds is the duration to wait for messages when polling.
+	waitTimeMilliseconds int32
+	// pollIntervalMilliseconds is the interval between polling attempts in milliseconds.
+	pollIntervalMilliseconds int32
 }
 
 // ApplyConsumerDefaults contains the default configuration for a new sqs consumer.
@@ -126,8 +129,11 @@ var ApplyConsumerDefaults = func(c *sqsConsumer) {
 	if c.maxMessagesPerBatch == 0 {
 		c.maxMessagesPerBatch = DefaultMaxMessagesPerBatch
 	}
-	if c.waitTimeSeconds == 0 {
-		c.waitTimeSeconds = DefaultWaitTimeSeconds
+	if c.waitTimeMilliseconds == 0 {
+		c.waitTimeMilliseconds = DefaultWaitTimeMilliseconds
+	}
+	if c.pollIntervalMilliseconds == 0 {
+		c.pollIntervalMilliseconds = DefaultPollIntervalMilliseconds
 	}
 	if c.exceptionHandler == nil {
 		c.exceptionHandler = func(ctx context.Context, err error) {
@@ -217,6 +223,11 @@ func (c *sqsConsumer) poll(ctx context.Context, pollerID int, processGroup *errg
 				c.exceptionHandler(ctx, err)
 				log.Error().Err(err).Msg("An error occurred during message reception, continuing...")
 			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(c.pollIntervalMilliseconds) * time.Millisecond):
+			}
 		}
 	}
 }
@@ -225,7 +236,7 @@ func (c *sqsConsumer) receiveAndProcessMessages(ctx context.Context, log zerolog
 	req := &sqs.ReceiveMessageInput{
 		QueueUrl:                    aws.String(c.queueURL),
 		MaxNumberOfMessages:         c.maxMessagesPerBatch,
-		WaitTimeSeconds:             c.waitTimeSeconds,
+		WaitTimeSeconds:             c.waitTimeMilliseconds,
 		MessageAttributeNames:       []string{string(types.MessageSystemAttributeNameAll)},
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
 	}
