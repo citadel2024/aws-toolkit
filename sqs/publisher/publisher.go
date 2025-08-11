@@ -54,6 +54,7 @@ type SQSPublisherOpt func(*sqsPublisher)
 
 func WithLogger(logger zerolog.Logger) SQSPublisherOpt {
 	return func(p *sqsPublisher) {
+		logger = logger.With().Timestamp().Logger()
 		p.logger = logger
 	}
 }
