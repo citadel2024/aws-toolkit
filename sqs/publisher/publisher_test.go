@@ -59,7 +59,9 @@ func (m *mockSQSClient) SendMessageBatch(ctx context.Context, params *sqs.SendMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var dst sqs.SendMessageBatchInput
-	_ = copier.Copy(&dst, params)
+	_ = copier.CopyWithOption(&dst, params, copier.Option{
+		DeepCopy: true,
+	})
 	m.sendMessageBatchInputs = append(m.sendMessageBatchInputs, &dst)
 	if m.sendMessageBatchErr != nil {
 		return &sqs.SendMessageBatchOutput{
