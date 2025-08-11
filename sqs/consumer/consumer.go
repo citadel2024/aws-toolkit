@@ -1,0 +1,282 @@
+package consumer
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/rs/zerolog"
+	"golang.org/x/sync/errgroup"
+
+	. "github.com/citadel2024/aws-toolkit/sqs"
+)
+
+// MessageHandlerFunc is a function type that defines how to handle incoming SQS messages.
+// If the error is nil, the message is considered successfully processed.
+// If the error wraps ErrNonRetryable, the message will be deleted and not retried.
+// If the error is any other type, the message will be NACKed (made immediately visible again) for retry later.
+type MessageHandlerFunc func(ctx context.Context, msg *types.Message) error
+
+// ExceptionHandlerFunc is a function type that defines how to handle exceptions
+type ExceptionHandlerFunc func(ctx context.Context, err error)
+
+type Option func(c *sqsConsumer)
+
+func WithMessageHandler(handler MessageHandlerFunc) Option {
+	return func(c *sqsConsumer) {
+		c.messageHandler = handler
+	}
+}
+
+func WithExceptionHandler(handler ExceptionHandlerFunc) Option {
+	return func(c *sqsConsumer) {
+		c.exceptionHandler = handler
+	}
+}
+
+func WithLogger(logger zerolog.Logger) Option {
+	return func(c *sqsConsumer) {
+		c.logger = logger
+	}
+}
+
+func WithPollingGoroutines(count int) Option {
+	return func(c *sqsConsumer) {
+		if count > 0 {
+			c.pollingConcurrency = count
+		}
+	}
+}
+
+func WithProcessingConcurrency(count int) Option {
+	return func(c *sqsConsumer) {
+		if count > 0 {
+			c.processingConcurrency = count
+		}
+	}
+}
+
+func WithMaxMessagesPerBatch(count int32) Option {
+	return func(c *sqsConsumer) {
+		if count > 0 && count <= 10 {
+			c.maxMessagesPerBatch = count
+		}
+	}
+}
+
+func WithWaitTimeSeconds(seconds int32) Option {
+	return func(c *sqsConsumer) {
+		if seconds >= 0 && seconds <= 20 {
+			c.waitTimeSeconds = seconds
+		}
+	}
+}
+
+func WithShutdownHook(hook func()) Option {
+	return func(c *sqsConsumer) {
+		c.shutdownHook = hook
+	}
+}
+
+type sqsConsumer struct {
+	// queueURL is the SQS queue URL where messages will be sent.
+	queueURL string
+	// logger is used for logging events and errors. Default zerolog.Nop()
+	logger zerolog.Logger
+	// client is the SQS client used to send messages.
+	client *sqs.Client
+	// messageHandler is the function that processes incoming messages.
+	messageHandler MessageHandlerFunc
+	// exceptionHandler is the function that handles exceptions during message processing.
+	exceptionHandler ExceptionHandlerFunc
+	// shutdownHook is a function that will be called when the consumer is shutting down.
+	shutdownHook func()
+	// pollingConcurrency is the number of goroutines that will poll for messages.
+	pollingConcurrency int
+	// processingConcurrency is the number of goroutines that will process messages concurrently.
+	processingConcurrency int
+	// maxMessagesPerBatch is the maximum number of messages to receive in a single batch.
+	maxMessagesPerBatch int32
+	// waitTimeSeconds is the duration to wait for messages when polling.
+	waitTimeSeconds int32
+}
+
+// ApplyConsumerDefaults contains the default configuration for a new sqs consumer.
+var ApplyConsumerDefaults = func(c *sqsConsumer) {
+	if c.logger.GetLevel() == zerolog.Disabled {
+		c.logger = zerolog.Nop()
+	}
+	if c.client == nil {
+		cfg, err := config.LoadDefaultConfig(context.Background())
+		if err != nil {
+			panic(fmt.Sprintf("unable to load AWS SDK config, %v", err))
+		}
+		c.client = sqs.NewFromConfig(cfg)
+	}
+	if c.pollingConcurrency == 0 {
+		c.pollingConcurrency = DefaultPollingConcurrency
+	}
+	if c.processingConcurrency == 0 {
+		c.processingConcurrency = DefaultProcessingConcurrency
+	}
+	if c.maxMessagesPerBatch == 0 {
+		c.maxMessagesPerBatch = DefaultMaxMessagesPerBatch
+	}
+	if c.waitTimeSeconds == 0 {
+		c.waitTimeSeconds = DefaultWaitTimeSeconds
+	}
+	if c.exceptionHandler == nil {
+		c.exceptionHandler = func(ctx context.Context, err error) {
+			c.logger.Error().Err(err).Msg("An exception occurred during message processing")
+		}
+	}
+}
+
+func New(queueURL string, options ...Option) Consumer {
+	if queueURL == "" {
+		panic("queueURL cannot be empty")
+	}
+	c := &sqsConsumer{
+		queueURL: queueURL,
+	}
+	for _, opt := range options {
+		opt(c)
+	}
+	if c.messageHandler == nil {
+		panic("messageHandler cannot be nil")
+	}
+	ApplyConsumerDefaults(c)
+	c.logger = c.logger.With().Str("service", "consumer").Str("queueURL", c.queueURL).Logger()
+	return c
+}
+
+func (c *sqsConsumer) Start(ctx context.Context) error {
+	c.logger.Info().
+		Int("pollingGoroutines", c.pollingConcurrency).
+		Int("processingConcurrency", c.processingConcurrency).
+		Msg("Starting consumer...")
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(c.processingConcurrency)
+
+	for i := 0; i < c.pollingConcurrency; i++ {
+		pollerID := i
+		g.Go(func() error {
+			return c.poll(gCtx, pollerID, g)
+		})
+	}
+
+	// When gCtx is canceled (from parent context or an error in poll), the errgroup will end.
+	err := g.Wait()
+
+	c.logger.Info().Msg("Consumer shutting down...")
+	if c.shutdownHook != nil {
+		c.shutdownHook()
+	}
+	c.logger.Info().Msg("Consumer stopped.")
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+func (c *sqsConsumer) poll(ctx context.Context, pollerID int, processGroup *errgroup.Group) error {
+	log := c.logger.With().Int("pollerID", pollerID).Logger()
+	log.Info().Msg("Polling loop started.")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Err(ctx.Err()).Msg("Polling loop stopping due to context cancellation.")
+			return ctx.Err()
+		default:
+			if err := c.receiveAndProcessMessages(ctx, log, processGroup); err != nil {
+				var qne *types.QueueDoesNotExist
+				if errors.As(err, &qne) {
+					log.Error().Err(err).Msg("Queue does not exist.")
+					return qne
+				}
+				c.exceptionHandler(ctx, err)
+				log.Error().Err(err).Msg("An error occurred during message reception, continuing...")
+			}
+		}
+	}
+}
+
+func (c *sqsConsumer) receiveAndProcessMessages(ctx context.Context, log zerolog.Logger, processGroup *errgroup.Group) error {
+	req := &sqs.ReceiveMessageInput{
+		QueueUrl:                    aws.String(c.queueURL),
+		MaxNumberOfMessages:         c.maxMessagesPerBatch,
+		WaitTimeSeconds:             c.waitTimeSeconds,
+		MessageAttributeNames:       []string{string(types.MessageSystemAttributeNameAll)},
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
+	}
+
+	resp, err := c.client.ReceiveMessage(ctx, req)
+	if err != nil {
+		return err
+	}
+	if len(resp.Messages) > 0 {
+		log.Debug().Int("count", len(resp.Messages)).Msg("Received messages")
+		for i := range resp.Messages {
+			msg := resp.Messages[i]
+			// use the same errgroup for processing messages, share same parent context
+			processGroup.Go(func() error {
+				c.handleMessage(ctx, &msg)
+				return nil
+			})
+		}
+	}
+	return nil
+}
+
+// handleMessage processes a single SQS message.
+func (c *sqsConsumer) handleMessage(ctx context.Context, msg *types.Message) {
+	msgLog := c.logger.With().Str("messageID", *msg.MessageId).Logger()
+	msgLog.Debug().Msg("Processing message")
+
+	processingErr := c.messageHandler(ctx, msg)
+	if processingErr == nil {
+		msgLog.Debug().Msg("Message processed successfully, deleting.")
+		if err := c.deleteMessage(ctx, msg.ReceiptHandle); err != nil {
+			msgLog.Error().Err(err).Msg("Failed to delete message after successful processing.")
+			c.exceptionHandler(ctx, err)
+		}
+		return
+	}
+
+	if errors.Is(processingErr, ErrNonRetryable) {
+		msgLog.Warn().Err(processingErr).Msg("Non-retryable error, deleting message.")
+		if err := c.deleteMessage(ctx, msg.ReceiptHandle); err != nil {
+			msgLog.Error().Err(err).Msg("Failed to delete message after non-retryable error.")
+			c.exceptionHandler(ctx, err)
+		}
+		return
+	}
+
+	msgLog.Error().Err(processingErr).Msg("Retryable error, changing message visibility to 0 for immediate retry.")
+	if err := c.changeMessageVisibility(ctx, msg.ReceiptHandle, 0); err != nil {
+		msgLog.Error().Err(err).Msg("Failed to NACK message after processing error.")
+		c.exceptionHandler(ctx, err)
+	}
+}
+
+func (c *sqsConsumer) deleteMessage(ctx context.Context, receiptHandle *string) error {
+	_, err := c.client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(c.queueURL),
+		ReceiptHandle: receiptHandle,
+	})
+	return err
+}
+
+func (c *sqsConsumer) changeMessageVisibility(ctx context.Context, receiptHandle *string, timeout int32) error {
+	_, err := c.client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          aws.String(c.queueURL),
+		ReceiptHandle:     receiptHandle,
+		VisibilityTimeout: timeout,
+	})
+	return err
+}
