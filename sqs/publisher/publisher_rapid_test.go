@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,8 +15,9 @@ import (
 // It ensures that generated IDs and message bodies are non-empty.
 func entryGenerator() *rapid.Generator[types.SendMessageBatchRequestEntry] {
 	return rapid.Custom(func(t *rapid.T) types.SendMessageBatchRequestEntry {
+		id := fmt.Sprintf("msg-%d-%d", time.Now().UnixNano(), rapid.Int().Draw(t, "idSuffix"))
 		return types.SendMessageBatchRequestEntry{
-			Id:          aws.String(rapid.String().Filter(func(s string) bool { return s != "" }).Draw(t, "id")),
+			Id:          aws.String(id),
 			MessageBody: aws.String(rapid.String().Filter(func(s string) bool { return s != "" }).Draw(t, "messageBody")),
 		}
 	})
@@ -57,7 +59,7 @@ func TestRapidPublisherBatchingProperties(t *testing.T) {
 		}
 
 		// Allow time for the publisher to process and send the final batch.
-		time.Sleep(publishInterval * 2)
+		time.Sleep(publishInterval + 10)
 
 		// Shutdown the publisher to ensure all buffered messages are flushed.
 		if err := publisher.Shutdown(ctx); err != nil {
