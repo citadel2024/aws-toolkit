@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
+	"sync"
 
 	. "github.com/citadel2024/aws-toolkit/sqs"
 )
@@ -159,18 +160,32 @@ func (c *sqsConsumer) Start(ctx context.Context) error {
 		Int("processingConcurrency", c.processingConcurrency).
 		Msg("Starting consumer...")
 
-	g, gCtx := errgroup.WithContext(ctx)
-	g.SetLimit(c.processingConcurrency)
+	gCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
+	processGroup, processCtx := errgroup.WithContext(gCtx)
+	processGroup.SetLimit(c.processingConcurrency)
+
+	var pollerWg sync.WaitGroup
 	for i := 0; i < c.pollingConcurrency; i++ {
+		pollerWg.Add(1)
 		pollerID := i
-		g.Go(func() error {
-			return c.poll(gCtx, pollerID, g)
-		})
+		go func() {
+			defer pollerWg.Done()
+			if err := c.poll(processCtx, pollerID, processGroup); err != nil {
+				if !errors.Is(err, context.Canceled) {
+					c.logger.Error().Err(err).Msg("Fatal poller error, initiating shutdown.")
+					cancel()
+				}
+			}
+		}()
 	}
-
-	// When gCtx is canceled (from parent context or an error in poll), the errgroup will end.
-	err := g.Wait()
+	// Wait for the context to be canceled, which can happen due to a parent context cancellation, an error from processing goroutines, or a fatal error from polling goroutines.
+	<-processCtx.Done()
+	// Wait for all polling goroutines to finish.
+	pollerWg.Wait()
+	// Wait for all processing goroutines to finish.
+	err := processGroup.Wait()
 
 	c.logger.Info().Msg("Consumer shutting down...")
 	if c.shutdownHook != nil {
@@ -223,7 +238,8 @@ func (c *sqsConsumer) receiveAndProcessMessages(ctx context.Context, log zerolog
 		log.Debug().Int("count", len(resp.Messages)).Msg("Received messages")
 		for i := range resp.Messages {
 			msg := resp.Messages[i]
-			// use the same errgroup for processing messages, share same parent context
+			// SQS processors fits perfectly into the errgroup model. They are typical “subtasks” — numerous, short-lived,
+			// and potentially error-prone — for which we need to limit concurrency and capture errors.
 			processGroup.Go(func() error {
 				c.handleMessage(ctx, &msg)
 				return nil
