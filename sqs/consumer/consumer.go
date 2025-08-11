@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/citadel2024/aws-toolkit/sqs"
@@ -89,7 +90,7 @@ type sqsConsumer struct {
 	// logger is used for logging events and errors. Default zerolog.Nop()
 	logger zerolog.Logger
 	// client is the SQS client used to send messages.
-	client *sqs.Client
+	client Client
 	// messageHandler is the function that processes incoming messages.
 	messageHandler MessageHandlerFunc
 	// exceptionHandler is the function that handles exceptions during message processing.
@@ -176,6 +177,7 @@ func (c *sqsConsumer) Start(ctx context.Context) error {
 	processGroup.SetLimit(c.processingConcurrency)
 
 	var pollerWg sync.WaitGroup
+	var pollErr atomic.Value
 	for i := 0; i < c.pollingConcurrency; i++ {
 		pollerWg.Add(1)
 		pollerID := i
@@ -184,6 +186,7 @@ func (c *sqsConsumer) Start(ctx context.Context) error {
 			if err := c.poll(processCtx, pollerID, processGroup); err != nil {
 				if !errors.Is(err, context.Canceled) {
 					c.logger.Error().Err(err).Msg("Fatal poller error, initiating shutdown.")
+					pollErr.Store(err)
 					cancel()
 				}
 			}
@@ -194,17 +197,18 @@ func (c *sqsConsumer) Start(ctx context.Context) error {
 	// Wait for all polling goroutines to finish.
 	pollerWg.Wait()
 	// Wait for all processing goroutines to finish.
-	err := processGroup.Wait()
-
 	c.logger.Info().Msg("Consumer shutting down...")
 	if c.shutdownHook != nil {
 		c.shutdownHook()
 	}
 	c.logger.Info().Msg("Consumer stopped.")
-	if errors.Is(err, context.Canceled) {
-		return nil
+	if v := pollErr.Load(); v != nil {
+		return v.(error)
 	}
-	return err
+	if err := processGroup.Wait(); !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
 func (c *sqsConsumer) poll(ctx context.Context, pollerID int, processGroup *errgroup.Group) error {
@@ -219,11 +223,11 @@ func (c *sqsConsumer) poll(ctx context.Context, pollerID int, processGroup *errg
 		default:
 			if err := c.receiveAndProcessMessages(ctx, log, processGroup); err != nil {
 				var qne *types.QueueDoesNotExist
+				c.exceptionHandler(ctx, err)
 				if errors.As(err, &qne) {
 					log.Error().Err(err).Msg("Queue does not exist.")
 					return qne
 				}
-				c.exceptionHandler(ctx, err)
 				log.Error().Err(err).Msg("An error occurred during message reception, continuing...")
 			}
 			select {
