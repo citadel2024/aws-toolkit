@@ -73,7 +73,7 @@ func WithPublishInterval(interval time.Duration) SQSPublisherOpt {
 
 func WithBatchMaxMessages(limit int) SQSPublisherOpt {
 	return func(p *sqsPublisher) {
-		p.batchMessagesLimit = min(limit, BatchMessagesLimit)
+		p.batchMessagesLimit = min(limit, DefaultBatchMessagesLimit)
 	}
 }
 
