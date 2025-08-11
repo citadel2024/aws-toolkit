@@ -72,7 +72,7 @@ func WithMaxMessagesPerBatch(count int32) Option {
 func WithWaitTimeSeconds(seconds int32) Option {
 	return func(c *sqsConsumer) {
 		if seconds >= 0 && seconds <= 20 {
-			c.waitTimeMilliseconds = seconds
+			c.waitTimeSeconds = seconds
 		}
 	}
 }
@@ -102,8 +102,8 @@ type sqsConsumer struct {
 	processingConcurrency int
 	// maxMessagesPerBatch is the maximum number of messages to receive in a single batch.
 	maxMessagesPerBatch int32
-	// waitTimeMilliseconds is the duration to wait for messages when polling.
-	waitTimeMilliseconds int32
+	// waitTimeSeconds is the duration to wait for messages when polling.
+	waitTimeSeconds int32
 	// pollIntervalMilliseconds is the interval between polling attempts in milliseconds.
 	pollIntervalMilliseconds int32
 }
@@ -129,8 +129,8 @@ var ApplyConsumerDefaults = func(c *sqsConsumer) {
 	if c.maxMessagesPerBatch == 0 {
 		c.maxMessagesPerBatch = DefaultMaxMessagesPerBatch
 	}
-	if c.waitTimeMilliseconds == 0 {
-		c.waitTimeMilliseconds = DefaultWaitTimeMilliseconds
+	if c.waitTimeSeconds == 0 {
+		c.waitTimeSeconds = DefaultWaitTimeSeconds
 	}
 	if c.pollIntervalMilliseconds == 0 {
 		c.pollIntervalMilliseconds = DefaultPollIntervalMilliseconds
@@ -236,7 +236,7 @@ func (c *sqsConsumer) receiveAndProcessMessages(ctx context.Context, log zerolog
 	req := &sqs.ReceiveMessageInput{
 		QueueUrl:                    aws.String(c.queueURL),
 		MaxNumberOfMessages:         c.maxMessagesPerBatch,
-		WaitTimeSeconds:             c.waitTimeMilliseconds,
+		WaitTimeSeconds:             c.waitTimeSeconds,
 		MessageAttributeNames:       []string{string(types.MessageSystemAttributeNameAll)},
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
 	}
@@ -253,6 +253,8 @@ func (c *sqsConsumer) receiveAndProcessMessages(ctx context.Context, log zerolog
 			// and potentially error-prone — for which we need to limit concurrency and capture errors.
 			processGroup.Go(func() error {
 				c.handleMessage(ctx, &msg)
+				// Ignore all errors from processing messages, as they are handled in handleMessage.
+				// Maybe we can improve this later by returning an error from handleMessage
 				return nil
 			})
 		}
