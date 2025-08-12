@@ -28,8 +28,20 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: '1.24'
+
+      - name: Setup Golang caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-golang-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-golang-
+
       - name: Run Go tests
         run: make test
+
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
