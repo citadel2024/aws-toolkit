@@ -1,22 +1,20 @@
 package consumer
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"io"
-	"sync"
-	"testing"
-	"time"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	. "github.com/citadel2024/aws-toolkit/sqs"
 	"github.com/rs/zerolog"
+	"github.com/smallnest/ringbuffer"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
+	"io"
+	"sync"
+	"testing"
+	"time"
 )
 
 func TestNew_Gomock(t *testing.T) {
@@ -106,8 +104,8 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 			assert.Equal(t, *msg.MessageId, *m.MessageId)
 			return nil
 		}
-		out := bytes.NewBuffer([]byte{})
-		c, mockClient := setupConsumer(t, handler, out)
+		rb := ringbuffer.New(1024)
+		c, mockClient := setupConsumer(t, handler, rb)
 		deleteInput := &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: aws.String(receiptHandle),
@@ -126,8 +124,9 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 
 		err := c.Start(ctx)
 		assert.NoError(t, err)
-		fmt.Println(out.String())
-		assert.Contains(t, out.String(), "Failed to delete message after successful processing.")
+		data := make([]byte, rb.Length())
+		_, _ = rb.Read(data)
+		assert.Contains(t, string(data), "Failed to delete message after successful processing.")
 	})
 
 	t.Run("Handle non-retryable error", func(t *testing.T) {
@@ -166,8 +165,8 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		handler := func(ctx context.Context, m *types.Message) error {
 			return ErrNonRetryable
 		}
-		out := bytes.NewBuffer([]byte{})
-		c, mockClient := setupConsumer(t, handler, out)
+		rb := ringbuffer.New(1024)
+		c, mockClient := setupConsumer(t, handler, rb)
 		deleteInput := &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: aws.String(receiptHandle),
@@ -187,7 +186,9 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 
 		err := c.Start(ctx)
 		assert.NoError(t, err)
-		assert.Contains(t, out.String(), "Failed to delete message after non-retryable error")
+		data := make([]byte, rb.Length())
+		_, _ = rb.Read(data)
+		assert.Contains(t, string(data), "Failed to delete message after non-retryable error")
 	})
 
 	t.Run("Handle retryable error", func(t *testing.T) {
@@ -227,8 +228,8 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		handler := func(ctx context.Context, m *types.Message) error {
 			return errors.New("something went wrong")
 		}
-		out := bytes.NewBuffer([]byte{})
-		c, mockClient := setupConsumer(t, handler, out)
+		rb := ringbuffer.New(1024)
+		c, mockClient := setupConsumer(t, handler, rb)
 		changeVisibilityInput := &sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          aws.String(queueURL),
 			ReceiptHandle:     aws.String(receiptHandle),
@@ -248,7 +249,9 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 
 		err := c.Start(ctx)
 		assert.NoError(t, err)
-		assert.Contains(t, out.String(), "Failed to NACK message after processing error")
+		data := make([]byte, rb.Length())
+		_, _ = rb.Read(data)
+		assert.Contains(t, string(data), "Failed to NACK message after processing error")
 	})
 
 	t.Run("Handle fatal error QueueDoesNotExist", func(t *testing.T) {
