@@ -26,6 +26,7 @@ unit_test:
 
 build_example:
 	go build ./examples/sqsconsumer
+	go build ./examples/sqspublisher
 
 test: build_example unit_test
 

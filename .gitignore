@@ -23,3 +23,5 @@ bin/
 coverage.out
 coverage.html
 *testdata*
+sqsconsumer
+sqspublisher
