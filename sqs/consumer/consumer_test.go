@@ -1,8 +1,11 @@
 package consumer
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	. "github.com/citadel2024/aws-toolkit/sqs"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )
@@ -45,7 +49,7 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		Body:          aws.String("hello world"),
 	}
 
-	setupConsumer := func(t *testing.T, handler MessageHandlerFunc) (*sqsConsumer, *MockClient) {
+	setupConsumer := func(t *testing.T, handler MessageHandlerFunc, out io.Writer) (*sqsConsumer, *MockClient) {
 		ctrl := gomock.NewController(t)
 		mockClient := NewMockClient(ctrl)
 
@@ -54,6 +58,7 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 			WithMessageHandler(handler),
 			WithPollingGoroutines(1),
 			WithProcessingConcurrency(1),
+			WithLogger(zerolog.New(out)),
 		)
 		assert.NoError(t, err)
 
@@ -72,7 +77,7 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 			return nil
 		}
 
-		c, mockClient := setupConsumer(t, handler)
+		c, mockClient := setupConsumer(t, handler, io.Discard)
 		deleteInput := &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: aws.String(receiptHandle),
@@ -93,6 +98,38 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("Process message successfully but delete failed", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		handler := func(ctx context.Context, m *types.Message) error {
+			assert.Equal(t, *msg.MessageId, *m.MessageId)
+			return nil
+		}
+		out := bytes.NewBuffer([]byte{})
+		c, mockClient := setupConsumer(t, handler, out)
+		deleteInput := &sqs.DeleteMessageInput{
+			QueueUrl:      aws.String(queueURL),
+			ReceiptHandle: aws.String(receiptHandle),
+		}
+
+		mockClient.EXPECT().ReceiveMessage(gomock.Any(), gomock.Any()).Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{*msg}}, nil).AnyTimes()
+		mockClient.EXPECT().DeleteMessage(gomock.Any(), deleteInput).Return(&sqs.DeleteMessageOutput{}, errors.New("failed to delete message")).Times(1).Do(func(ctx context.Context, input *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) {
+			wg.Done()
+		}).AnyTimes()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			wg.Wait()
+			cancel()
+		}()
+
+		err := c.Start(ctx)
+		assert.NoError(t, err)
+		fmt.Println(out.String())
+		assert.Contains(t, out.String(), "Failed to delete message after successful processing.")
+	})
+
 	t.Run("Handle non-retryable error", func(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -100,8 +137,7 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		handler := func(ctx context.Context, m *types.Message) error {
 			return ErrNonRetryable
 		}
-
-		c, mockClient := setupConsumer(t, handler)
+		c, mockClient := setupConsumer(t, handler, io.Discard)
 		deleteInput := &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: aws.String(receiptHandle),
@@ -123,6 +159,37 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("Handle non-retryable error but delete failed", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		handler := func(ctx context.Context, m *types.Message) error {
+			return ErrNonRetryable
+		}
+		out := bytes.NewBuffer([]byte{})
+		c, mockClient := setupConsumer(t, handler, out)
+		deleteInput := &sqs.DeleteMessageInput{
+			QueueUrl:      aws.String(queueURL),
+			ReceiptHandle: aws.String(receiptHandle),
+		}
+
+		mockClient.EXPECT().ReceiveMessage(gomock.Any(), gomock.Any()).Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{*msg}}, nil).AnyTimes()
+		mockClient.EXPECT().DeleteMessage(gomock.Any(), deleteInput).Return(&sqs.DeleteMessageOutput{}, errors.New("failed to delete message")).Times(1).Do(func(ctx context.Context, input *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) {
+			wg.Done()
+		}).AnyTimes()
+		mockClient.EXPECT().ChangeMessageVisibility(gomock.Any(), gomock.Any()).Times(0)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			wg.Wait()
+			cancel()
+		}()
+
+		err := c.Start(ctx)
+		assert.NoError(t, err)
+		assert.Contains(t, out.String(), "Failed to delete message after non-retryable error")
+	})
+
 	t.Run("Handle retryable error", func(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -130,7 +197,7 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		handler := func(ctx context.Context, m *types.Message) error {
 			return errors.New("something went wrong")
 		}
-		c, mockClient := setupConsumer(t, handler)
+		c, mockClient := setupConsumer(t, handler, io.Discard)
 		changeVisibilityInput := &sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          aws.String(queueURL),
 			ReceiptHandle:     aws.String(receiptHandle),
@@ -153,9 +220,40 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("Handle retryable error but change visibility failed", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		handler := func(ctx context.Context, m *types.Message) error {
+			return errors.New("something went wrong")
+		}
+		out := bytes.NewBuffer([]byte{})
+		c, mockClient := setupConsumer(t, handler, out)
+		changeVisibilityInput := &sqs.ChangeMessageVisibilityInput{
+			QueueUrl:          aws.String(queueURL),
+			ReceiptHandle:     aws.String(receiptHandle),
+			VisibilityTimeout: 0,
+		}
+		mockClient.EXPECT().ReceiveMessage(gomock.Any(), gomock.Any()).Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{*msg}}, nil).AnyTimes()
+		mockClient.EXPECT().ChangeMessageVisibility(gomock.Any(), changeVisibilityInput).Return(&sqs.ChangeMessageVisibilityOutput{}, errors.New("failed to change visibility")).Times(1).Do(func(ctx context.Context, input *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) {
+			wg.Done()
+		}).AnyTimes()
+		mockClient.EXPECT().DeleteMessage(gomock.Any(), gomock.Any()).Times(0)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			wg.Wait()
+			cancel()
+		}()
+
+		err := c.Start(ctx)
+		assert.NoError(t, err)
+		assert.Contains(t, out.String(), "Failed to NACK message after processing error")
+	})
+
 	t.Run("Handle fatal error QueueDoesNotExist", func(t *testing.T) {
 		handler := func(ctx context.Context, m *types.Message) error { return nil }
-		c, mockClient := setupConsumer(t, handler)
+		c, mockClient := setupConsumer(t, handler, io.Discard)
 		qdeErr := &types.QueueDoesNotExist{Message: aws.String("queue not found")}
 
 		mockClient.EXPECT().ReceiveMessage(gomock.Any(), gomock.Any()).Return(nil, qdeErr).AnyTimes()
@@ -181,7 +279,7 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		}
 
 		handler := func(ctx context.Context, m *types.Message) error { return nil }
-		c, mockClient := setupConsumer(t, handler)
+		c, mockClient := setupConsumer(t, handler, io.Discard)
 		c.shutdownHook = hook
 
 		mockClient.EXPECT().ReceiveMessage(gomock.Any(), gomock.Any()).Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{}}, nil).AnyTimes()
