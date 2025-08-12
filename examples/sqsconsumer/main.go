@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/citadel2024/aws-toolkit/sqs"
-	"github.com/citadel2024/aws-toolkit/sqs/consumer"
+	"github.com/citadel2024/aws-toolkit/sqsx"
+	"github.com/citadel2024/aws-toolkit/sqsx/consumer"
 	"github.com/rs/zerolog"
 )
 
@@ -135,7 +135,7 @@ func processOrderMessage(ctx context.Context, msg *types.Message, logger zerolog
 	var order OrderMessage
 	if err := json.Unmarshal([]byte(*msg.Body), &order); err != nil {
 		logger.Error().Err(err).Msg("Failed to unmarshal order message")
-		return fmt.Errorf("invalid order message format: %w", sqs.ErrNonRetryable)
+		return fmt.Errorf("invalid order message format: %w", sqsx.ErrNonRetryable)
 	}
 
 	logger.Info().
@@ -148,7 +148,7 @@ func processOrderMessage(ctx context.Context, msg *types.Message, logger zerolog
 	// Validate order
 	if order.OrderID == "" || order.CustomerID == "" {
 		logger.Error().Msg("Order missing required fields")
-		return fmt.Errorf("invalid order data: %w", sqs.ErrNonRetryable)
+		return fmt.Errorf("invalid order data: %w", sqsx.ErrNonRetryable)
 	}
 
 	// Simulate order processing
@@ -166,7 +166,7 @@ func processPaymentMessage(ctx context.Context, msg *types.Message, logger zerol
 	var payment PaymentMessage
 	if err := json.Unmarshal([]byte(*msg.Body), &payment); err != nil {
 		logger.Error().Err(err).Msg("Failed to unmarshal payment message")
-		return fmt.Errorf("invalid payment message format: %w", sqs.ErrNonRetryable)
+		return fmt.Errorf("invalid payment message format: %w", sqsx.ErrNonRetryable)
 	}
 
 	logger.Info().

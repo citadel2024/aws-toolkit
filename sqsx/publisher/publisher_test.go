@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	. "github.com/citadel2024/aws-toolkit/sqs"
+	. "github.com/citadel2024/aws-toolkit/sqsx"
 )
 
 // mockSQSClient is a mock implementation of the SQS client for testing purposes.

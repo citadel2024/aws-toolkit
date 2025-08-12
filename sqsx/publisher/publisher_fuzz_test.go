@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	. "github.com/citadel2024/aws-toolkit/sqs"
+	. "github.com/citadel2024/aws-toolkit/sqsx"
 )
 
 // FuzzPublishMessageBatchWithEntry performs fuzz testing on the PublishMessageBatchWithEntry method.

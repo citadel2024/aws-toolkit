@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/rs/zerolog"
 
-	. "github.com/citadel2024/aws-toolkit/sqs"
+	. "github.com/citadel2024/aws-toolkit/sqsx"
 )
 
 type sqsPublisher struct {

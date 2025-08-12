@@ -6,7 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	. "github.com/citadel2024/aws-toolkit/sqs"
+	. "github.com/citadel2024/aws-toolkit/sqsx"
 	"github.com/rs/zerolog"
 	"github.com/smallnest/ringbuffer"
 	"github.com/stretchr/testify/assert"

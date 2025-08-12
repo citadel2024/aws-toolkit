@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/citadel2024/aws-toolkit/sqs"
+	. "github.com/citadel2024/aws-toolkit/sqsx"
 )
 
 // MessageHandlerFunc is a function type that defines how to handle incoming SQS messages.
