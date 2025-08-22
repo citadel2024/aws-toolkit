@@ -4,6 +4,8 @@ all: mockgen mock rapid_test fuzz_test unit_test test cover
 
 mockgen:
 	mockgen -source sqsx/interface.go -destination sqsx/mock_interface.go -package sqsx
+	mockgen -source cloudwatchx/interface.go -destination cloudwatchx/mock_interface.go -package cloudwatchx
+	mockgen -source secretsmanagerx/interface.go -destination secretsmanagerx/mock_interface.go -package secretsmanagerx
 
 mock: mockgen
 
