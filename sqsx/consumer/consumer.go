@@ -202,11 +202,13 @@ func (c *sqsConsumer) Start(ctx context.Context) error {
 		c.shutdownHook()
 	}
 	c.logger.Info().Msg("Consumer stopped.")
-	if v := pollErr.Load(); v != nil {
-		return v.(error)
+	pollError, _ := pollErr.Load().(error)
+	procError := processGroup.Wait()
+	if errors.Is(procError, context.Canceled) {
+		procError = nil
 	}
-	if err := processGroup.Wait(); !errors.Is(err, context.Canceled) {
-		return err
+	if pollError != nil || procError != nil {
+		return errors.Join(pollError, procError)
 	}
 	return nil
 }
