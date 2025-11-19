@@ -171,10 +171,8 @@ func TestRapidConsumer_Start_Property(t *testing.T) {
 			WithProcessingConcurrency(config.c),
 			WithMaxMessagesPerBatch(config.m),
 			WithWaitTimeSeconds(1),
-			func(c *sqsConsumer) {
-				c.client = mockClient
-				c.pollIntervalMilliseconds = 10
-			},
+			WithClient(mockClient),
+			WithPollIntervalMilliseconds(10),
 		)
 		if err != nil {
 			t.Fatalf("Failed to create consumer: %v", err)

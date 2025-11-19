@@ -72,12 +72,12 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 			WithPollingGoroutines(1),
 			WithProcessingConcurrency(1),
 			WithLogger(zerolog.New(out)),
+			WithClient(mockClient),
+			WithPollIntervalMilliseconds(1),
 		)
 		assert.NoError(t, err)
 
 		consumer := c.(*sqsConsumer)
-		consumer.client = mockClient
-		consumer.pollIntervalMilliseconds = 1 // speed up testing
 		return consumer, mockClient
 	}
 

@@ -46,6 +46,15 @@ func WithLogger(logger zerolog.Logger) Option {
 	}
 }
 
+// WithClient injects a custom SQS client implementation (e.g. wrapped for metrics).
+func WithClient(client Client) Option {
+	return func(c *sqsConsumer) {
+		if client != nil {
+			c.client = client
+		}
+	}
+}
+
 func WithPollingGoroutines(count int) Option {
 	return func(c *sqsConsumer) {
 		if count > 0 {
