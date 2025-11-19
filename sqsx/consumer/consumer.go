@@ -78,6 +78,14 @@ func WithWaitTimeSeconds(seconds int32) Option {
 	}
 }
 
+func WithPollIntervalMilliseconds(interval int32) Option {
+	return func(c *sqsConsumer) {
+		if interval >= 0 {
+			c.pollIntervalMilliseconds = interval
+		}
+	}
+}
+
 func WithShutdownHook(hook func()) Option {
 	return func(c *sqsConsumer) {
 		c.shutdownHook = hook

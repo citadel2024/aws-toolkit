@@ -63,6 +63,7 @@ Inspired by https://github.com/awslabs/amazon-sqs-java-temporary-queues-client.
 | `WithProcessingConcurrency(count)` | Max concurrent message processors | 10 |
 | `WithMaxMessagesPerBatch(count)` | Messages per receive call (1-10) | 10 |
 | `WithWaitTimeSeconds(seconds)` | Long polling wait time (0-20) | 20 |
+| `WithPollIntervalMilliseconds(interval)` | Delay between polling attempts (>=0 ms) | 0 |
 | `WithShutdownHook(hook)` | Function called on shutdown | None |
 
 ## Advanced Usage

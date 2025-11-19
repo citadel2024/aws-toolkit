@@ -37,6 +37,21 @@ func TestNew_Gomock(t *testing.T) {
 	})
 }
 
+func TestWithPollIntervalMilliseconds(t *testing.T) {
+	dummyHandler := func(ctx context.Context, msg *types.Message) error { return nil }
+
+	c, err := New(
+		"test-queue",
+		WithMessageHandler(dummyHandler),
+		WithPollIntervalMilliseconds(250),
+	)
+	assert.NoError(t, err)
+
+	sqsConsumer, ok := c.(*sqsConsumer)
+	assert.True(t, ok)
+	assert.Equal(t, int32(250), sqsConsumer.pollIntervalMilliseconds)
+}
+
 func TestConsumer_Start_Gomock(t *testing.T) {
 	queueURL := "test-queue"
 	messageID := "test-msg-id"
