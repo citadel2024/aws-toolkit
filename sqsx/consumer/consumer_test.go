@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	. "github.com/citadel2024/aws-toolkit/sqsx"
+	"github.com/citadel2024/aws-toolkit/sqsx/sqsxmock"
 	"github.com/rs/zerolog"
 	"github.com/smallnest/ringbuffer"
 	"github.com/stretchr/testify/assert"
@@ -62,9 +63,9 @@ func TestConsumer_Start_Gomock(t *testing.T) {
 		Body:          aws.String("hello world"),
 	}
 
-	setupConsumer := func(t *testing.T, handler MessageHandlerFunc, out io.Writer) (*sqsConsumer, *MockClient) {
+	setupConsumer := func(t *testing.T, handler MessageHandlerFunc, out io.Writer) (*sqsConsumer, *sqsxmock.MockClient) {
 		ctrl := gomock.NewController(t)
-		mockClient := NewMockClient(ctrl)
+		mockClient := sqsxmock.NewMockClient(ctrl)
 
 		c, err := New(
 			queueURL,

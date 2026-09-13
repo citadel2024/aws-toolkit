@@ -2,10 +2,15 @@
 
 all: mockgen mock rapid_test fuzz_test unit_test test cover
 
+# Mocks are generated into a separate <pkg>mock subpackage, never into the package
+# that declares the interface. A mock in the package itself is an ordinary exported
+# file, so every program importing cloudwatchx/secretsmanagerx/sqsx for real work
+# used to link go.uber.org/mock into its production binary. A subpackage that only
+# tests import never enters a binary's build graph.
 mockgen:
-	mockgen -source sqsx/interface.go -destination sqsx/mock_interface.go -package sqsx
-	mockgen -source cloudwatchx/interface.go -destination cloudwatchx/mock_interface.go -package cloudwatchx
-	mockgen -source secretsmanagerx/interface.go -destination secretsmanagerx/mock_interface.go -package secretsmanagerx
+	mockgen -source sqsx/interface.go -destination sqsx/sqsxmock/mock_interface.go -package sqsxmock
+	mockgen -source cloudwatchx/interface.go -destination cloudwatchx/cloudwatchxmock/mock_interface.go -package cloudwatchxmock
+	mockgen -source secretsmanagerx/interface.go -destination secretsmanagerx/secretsmanagerxmock/mock_interface.go -package secretsmanagerxmock
 
 mock: mockgen
 
